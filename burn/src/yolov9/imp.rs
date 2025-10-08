@@ -143,21 +143,20 @@ impl BaseTransformImpl for Yolov9 {
         let model = YOLOv9c::<MyBackend>::new(&device);
         println!("model: {:p}", &model);
         let recorder =
-            burn::record::NamedMpkBytesRecorder::<burn::record::FullPrecisionSettings>::new();
+            burn::record::NamedMpkFileRecorder::<burn::record::FullPrecisionSettings>::new();
         println!("recorder: {:p}", &recorder);
 
-        // Non-working attempt to load the model; leads to SIGBUS
+        // On M1 Mac, non-working attempt to load the model; leads to SIGBUS
         // Note, embedding the model file in the binary with include_bytes! and loading with the BinFileRecorder has also been attempted
         let record: super::yolov9c::YOLOv9cRecord<MyBackend> = recorder
             .load(path.as_str().into(), &device)
             .expect("Record file to exist.");
         println!("record: {:p}", &record);
 
-        // Haven't gotten this far yet
         let model = model.load_record(record);
         println!("model: {:p}", &model);
 
-        // If the model were to successfully load, it would be stored in state
+        // If the model were to successfully load, it would be stored in state here
 
         Ok(())
     }
