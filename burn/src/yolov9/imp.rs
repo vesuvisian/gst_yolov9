@@ -1,44 +1,56 @@
 use std::sync::{LazyLock, Mutex};
 
-// Note: Candle and Wgpu backends have been attempted as well
-use burn::backend::{ndarray::NdArrayDevice, NdArray};
-use burn::prelude::Module;
-use burn::record::Recorder;
+use burn::prelude::Device;
+use burn::tensor::DeviceKind;
 use gst::glib;
-use gst::prelude::*;
 use gst::subclass::prelude::*;
+use gst_video::prelude::*;
 use gst_video::subclass::prelude::*;
+use image::{ImageBuffer, Rgb};
+use imageproc::drawing::draw_hollow_rect_mut;
+use imageproc::rect::Rect;
 
-use super::yolov9c::YOLOv9c;
+use super::image::convert_video_frame_to_image;
+use super::inference_engine::InferenceEngine;
 
-type MyBackend = NdArray<f32, i32>;
-static DEVICE: LazyLock<NdArrayDevice> = LazyLock::new(|| NdArrayDevice::default());
-
-const DEFAULT_MODEL_PATH: &str = "burn/src/yolov9/model.mpk";
-
-#[derive(Debug, Clone)]
-struct Settings {
-    model_path: String,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            model_path: DEFAULT_MODEL_PATH.to_string(),
-        }
+static DEVICE: LazyLock<Device> = LazyLock::new(|| {
+    #[cfg(target_vendor = "apple")]
+    {
+        Device::metal(DeviceKind::DefaultDevice)
     }
-}
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        Device::flex()
+    }
+});
 
-// #[derive(Default)]
-// struct State {}
+static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
+    gst::DebugCategory::new(
+        "yolov9",
+        gst::DebugColorFlags::empty(),
+        Some("YOLOv9"),
+    )
+});
+
+const BASE_COLORS: [(u8, u8, u8); 6] = [
+    (255, 0, 0),
+    (0, 255, 0),
+    (0, 0, 255),
+    (255, 255, 0),
+    (255, 0, 255),
+    (0, 255, 255),
+];
+
+#[derive(Default)]
+struct State {
+    // Box keeps YOLOv9c's 64-byte alignment off the GObject instance (glib max is 16).
+    ie: Option<Box<InferenceEngine>>,
+}
 
 #[derive(Default)]
 pub struct Yolov9 {
-    settings: Mutex<Settings>,
-    // state: Arc<Mutex<State>>,
+    state: Mutex<State>,
 }
-
-// impl Yolov9 {}
 
 #[glib::object_subclass]
 impl ObjectSubclass for Yolov9 {
@@ -47,36 +59,7 @@ impl ObjectSubclass for Yolov9 {
     type ParentType = gst_video::VideoFilter;
 }
 
-impl ObjectImpl for Yolov9 {
-    fn properties() -> &'static [glib::ParamSpec] {
-        static PROPERTIES: LazyLock<Vec<glib::ParamSpec>> = LazyLock::new(|| {
-            vec![glib::ParamSpecString::builder("model-path")
-                .nick("Model path")
-                .blurb("Path to the model .mpk file")
-                .default_value(DEFAULT_MODEL_PATH)
-                .build()]
-        });
-        PROPERTIES.as_ref()
-    }
-
-    fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
-        match pspec.name() {
-            "model-path" => {
-                let mut settings = self.settings.lock().unwrap();
-                settings.model_path = value.get().expect("type checked upstream");
-            }
-            _ => unimplemented!(),
-        }
-    }
-
-    fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
-        let settings = self.settings.lock().unwrap();
-        match pspec.name() {
-            "model-path" => settings.model_path.to_value(),
-            _ => unimplemented!(),
-        }
-    }
-}
+impl ObjectImpl for Yolov9 {}
 
 impl GstObjectImpl for Yolov9 {}
 
@@ -86,7 +69,7 @@ impl ElementImpl for Yolov9 {
             gst::subclass::ElementMetadata::new(
                 "YOLOv9",
                 "Filter/Video",
-                "Perform inference with a YOLOv9 model using Burn",
+                "Run YOLOv9 inference and overlay bounding boxes",
                 "Andrew Martin",
             )
         });
@@ -99,23 +82,21 @@ impl ElementImpl for Yolov9 {
                 .format(gst_video::VideoFormat::Rgb)
                 .build();
 
-            let video_pad_template = gst::PadTemplate::new(
+            let sink = gst::PadTemplate::new(
                 "sink",
                 gst::PadDirection::Sink,
                 gst::PadPresence::Always,
                 &video_caps,
             )
             .unwrap();
-
-            let src_pad_template = gst::PadTemplate::new(
+            let src = gst::PadTemplate::new(
                 "src",
                 gst::PadDirection::Src,
                 gst::PadPresence::Always,
                 &video_caps,
             )
             .unwrap();
-
-            vec![video_pad_template, src_pad_template]
+            vec![sink, src]
         });
         PAD_TEMPLATES.as_ref()
     }
@@ -128,36 +109,11 @@ impl BaseTransformImpl for Yolov9 {
     const TRANSFORM_IP_ON_PASSTHROUGH: bool = true;
 
     fn start(&self) -> Result<(), gst::ErrorMessage> {
-        // Note, loading the model has also been attempted above in set_property and below in transform_frame_ip
-
-        let settings = self.settings.lock().unwrap().clone();
-
-        let path = &settings.model_path;
-        assert!(
-            std::path::Path::new(&path).exists(),
-            "File does not exist: {}",
-            path
-        );
-        let device = DEVICE.clone();
-
-        let model = YOLOv9c::<MyBackend>::new(&device);
-        println!("model: {:p}", &model);
-        let recorder =
-            burn::record::NamedMpkFileRecorder::<burn::record::FullPrecisionSettings>::new();
-        println!("recorder: {:p}", &recorder);
-
-        // On M1 Mac, non-working attempt to load the model; leads to SIGBUS
-        // Note, embedding the model file in the binary with include_bytes! and loading with the BinFileRecorder has also been attempted
-        let record: super::yolov9c::YOLOv9cRecord<MyBackend> = recorder
-            .load(path.as_str().into(), &device)
-            .expect("Record file to exist.");
-        println!("record: {:p}", &record);
-
-        let model = model.load_record(record);
-        println!("model: {:p}", &model);
-
-        // If the model were to successfully load, it would be stored in state here
-
+        let mut state = self.state.lock().unwrap();
+        if state.ie.is_none() {
+            gst::info!(CAT, imp = self, "Loading model");
+            state.ie = Some(Box::new(InferenceEngine::new(&*DEVICE)));
+        }
         Ok(())
     }
 }
@@ -165,9 +121,81 @@ impl BaseTransformImpl for Yolov9 {
 impl VideoFilterImpl for Yolov9 {
     fn transform_frame_ip(
         &self,
-        _frame: &mut gst_video::VideoFrameRef<&mut gst::BufferRef>,
+        frame: &mut gst_video::VideoFrameRef<&mut gst::BufferRef>,
     ) -> Result<gst::FlowSuccess, gst::FlowError> {
-        // Here is where the inference would be performed on the frame data
+        let bboxes = {
+            let mut state = self.state.lock().unwrap();
+            let Some(ie) = state.ie.as_mut() else {
+                return Ok(gst::FlowSuccess::Ok);
+            };
+
+            let img = match convert_video_frame_to_image(frame) {
+                Ok(img) => img,
+                Err(e) => {
+                    gst::error!(CAT, imp = self, "Failed to convert frame: {}", e);
+                    return Ok(gst::FlowSuccess::Ok);
+                }
+            };
+
+            ie.infer(&img)
+        };
+
+        if bboxes.is_empty() {
+            return Ok(gst::FlowSuccess::Ok);
+        }
+
+        let width = frame.width();
+        let height = frame.height();
+        let stride = frame.plane_stride()[0] as usize;
+        let data = match frame.plane_data_mut(0) {
+            Ok(d) => d,
+            Err(_) => {
+                gst::error!(CAT, imp = self, "Missing writable plane data");
+                return Ok(gst::FlowSuccess::Ok);
+            }
+        };
+
+        let row_bytes = width as usize * 3;
+        let mut packed = if stride == row_bytes {
+            data.to_vec()
+        } else {
+            let mut buf = Vec::with_capacity(row_bytes * height as usize);
+            for y in 0..height as usize {
+                buf.extend_from_slice(&data[y * stride..y * stride + row_bytes]);
+            }
+            buf
+        };
+
+        {
+            let Some(mut img) =
+                ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, packed.as_mut_slice())
+            else {
+                gst::error!(CAT, imp = self, "Failed to wrap frame as ImageBuffer");
+                return Ok(gst::FlowSuccess::Ok);
+            };
+
+            for &(x, y, w, h, class_id) in &bboxes {
+                if w == 0 || h == 0 {
+                    continue;
+                }
+                let (r, g, b) = BASE_COLORS[class_id.unsigned_abs() as usize % BASE_COLORS.len()];
+                draw_hollow_rect_mut(
+                    &mut img,
+                    Rect::at(x as i32, y as i32).of_size(w, h),
+                    Rgb([r, g, b]),
+                );
+            }
+        }
+
+        if stride == row_bytes {
+            data.copy_from_slice(&packed);
+        } else {
+            for y in 0..height as usize {
+                data[y * stride..y * stride + row_bytes]
+                    .copy_from_slice(&packed[y * row_bytes..(y + 1) * row_bytes]);
+            }
+        }
+
         Ok(gst::FlowSuccess::Ok)
     }
 }

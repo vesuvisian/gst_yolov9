@@ -1,7 +1,9 @@
 use gst::glib;
 use gst::prelude::*;
 
+mod image;
 mod imp;
+mod inference_engine;
 mod yolov9c;
 
 glib::wrapper! {
