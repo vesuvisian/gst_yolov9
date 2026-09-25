@@ -2289,7 +2289,7 @@ impl Submodule6 {
 }
 
 #[derive(Module, Debug)]
-pub struct YOLOv9c {
+pub struct YOLOv9m {
     submodule1: Submodule1,
     submodule2: Submodule2,
     submodule3: Submodule3,
@@ -2301,7 +2301,7 @@ pub struct YOLOv9c {
 }
 
 
-impl YOLOv9c {
+impl YOLOv9m {
     /// Load model weights from a burnpack file.
     pub fn from_file<P: AsRef<std::path::Path>>(file: P, device: &Device) -> Self {
         let mut model = Self::new(device);
@@ -2327,7 +2327,7 @@ impl YOLOv9c {
     // }
 }
 
-impl YOLOv9c {
+impl YOLOv9m {
     #[allow(unused_variables)]
     pub fn new(device: &Device) -> Self {
         let submodule1 = Submodule1::new(device);

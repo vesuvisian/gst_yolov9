@@ -4,7 +4,7 @@ use gst::prelude::*;
 mod image;
 mod imp;
 mod inference_engine;
-mod yolov9c;
+mod yolov9m;
 
 glib::wrapper! {
     pub struct Yolov9(ObjectSubclass<imp::Yolov9>) @extends gst_video::VideoFilter, gst_base::BaseTransform, gst::Element, gst::Object;

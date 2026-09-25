@@ -43,7 +43,7 @@ const BASE_COLORS: [(u8, u8, u8); 6] = [
 
 #[derive(Default)]
 struct State {
-    // Box keeps YOLOv9c's 64-byte alignment off the GObject instance (glib max is 16).
+    // Box keeps YOLOv9m's 64-byte alignment off the GObject instance (glib max is 16).
     ie: Option<Box<InferenceEngine>>,
 }
 

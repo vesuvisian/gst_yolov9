@@ -6,9 +6,9 @@ use fast_image_resize::{PixelType, Resizer};
 use image::{GenericImage, GenericImageView, ImageBuffer, Rgb};
 
 use super::image::Rgb32FImage;
-use super::yolov9c::YOLOv9c;
+use super::yolov9m::YOLOv9m;
 
-const MODEL_PATH: &str = "burn/src/yolov9/model.bpk";
+const MODEL_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/yolov9/model.bpk");
 const INPUT_H: usize = 640;
 const INPUT_W: usize = 640;
 const CONF_THRESH: f32 = 0.25;
@@ -34,7 +34,7 @@ struct SizeParams {
 }
 
 pub struct InferenceEngine {
-    model: YOLOv9c,
+    model: YOLOv9m,
     device: Device,
     conf_thresh_logit: f32,
     size_params: Option<SizeParams>,
@@ -46,7 +46,7 @@ impl InferenceEngine {
             std::path::Path::new(MODEL_PATH).exists(),
             "model not found: {MODEL_PATH}"
         );
-        let model = YOLOv9c::from_file(MODEL_PATH, device);
+        let model = YOLOv9m::from_file(MODEL_PATH, device);
         Self {
             model,
             device: device.clone(),
