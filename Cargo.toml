@@ -1,11 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "version-helper",
     "burn"
 ]
 default-members = [
-    "version-helper",
     "burn"
 ]
 
@@ -19,7 +17,7 @@ rust-version = "1.88.0"
 gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", branch = "main" }
 gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", branch = "main" }
 gst-check = { package = "gstreamer-check", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", branch = "main" }
-gst-plugin-version-helper = { path = "./version-helper" }
+gst-plugin-version-helper = "0.8.4"
 gst-video = { package = "gstreamer-video", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", branch = "main" }
 
 [profile.release]

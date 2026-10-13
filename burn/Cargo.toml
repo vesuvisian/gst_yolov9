@@ -7,7 +7,7 @@ description = "GStreamer Plugin for performing inference using Burn"
 repository.workspace = true
 
 [dependencies]
-burn = { version = "0.22.0-pre.4", features = ["metal", "flex", "store"] }
+burn = { version = "0.22.0", features = ["metal", "flex", "store"] }
 bytemuck = "1.23.2"
 fast_image_resize = { version = "5.3.0", features = ["image", "rayon"] }
 gst = { workspace = true, features = ["serde"] }
